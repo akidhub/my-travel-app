@@ -1,0 +1,7 @@
+streamlit
+pandas
+pdfplumber
+pytesseract
+Pillow
+pillow_heif
+st-gsheets-connection
