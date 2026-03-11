@@ -99,8 +99,20 @@ AIRPORT_DB = {
     "KHH": "高雄 (KHH)", "BKK": "曼谷 (BKK)", "DMK": "曼谷廊曼 (DMK)",
     "NRT": "東京成田 (NRT)", "HND": "東京羽田 (HND)", "KIX": "大阪關西 (KIX)"
 }
+# --- 原本的預設值 ---
 if "trip_start_date" not in st.session_state: st.session_state.trip_start_date = datetime.date.today()
 if "trip_end_date" not in st.session_state: st.session_state.trip_end_date = datetime.date.today() + datetime.timedelta(days=12)
+
+# 💡 新增：自動根據雲端載入的「航班」資料，動態校正旅程的起始與結束日期
+if "flights" in st.session_state and not st.session_state.flights.empty:
+    try:
+        # 將航班日期轉為時間格式，並找出最早和最晚的一天
+        f_dates = pd.to_datetime(st.session_state.flights["日期"], errors="coerce").dt.date.dropna()
+        if not f_dates.empty:
+            st.session_state.trip_start_date = f_dates.min()
+            if f_dates.max() > f_dates.min():
+                st.session_state.trip_end_date = f_dates.max()
+    except: pass
 
 def get_trip_days(): return max(1, (st.session_state.trip_end_date - st.session_state.trip_start_date).days + 1)
 def get_date_of_day(day_idx): return st.session_state.trip_start_date + datetime.timedelta(days=int(day_idx)-1)
@@ -143,11 +155,23 @@ def extract_ticket_info(file):
     times = re.findall(r"\b\d{2}:\d{2}\b", text)
     if len(times) >= 2: info["dep_time"], info["arr_time"] = times[0], times[1]
 
+    # 💡 修改：強化日期辨識邏輯
     parsed_dates = []
+    # 1. 原本尋找 YYYY-MM-DD 的規則
     for match in re.findall(r"(20[2-3]\d)[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12]\d|3[01])", text_upper):
         try: parsed_dates.append(datetime.date(int(match[0]), int(match[1]), int(match[2])))
         except: pass
+        
+    # 2. 新增尋找 DD/MMM/YYYY 的規則 (例如 23/MAY/2026)
+    month_map = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6, "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
+    for match in re.findall(r"(0?[1-9]|[12]\d|3[01])[-/]([A-Z]{3})[-/](20[2-3]\d)", text_upper):
+        try:
+            m_num = month_map.get(match[1])
+            if m_num: parsed_dates.append(datetime.date(int(match[2]), m_num, int(match[0])))
+        except: pass
+
     if parsed_dates: info["flight_date"] = max(parsed_dates)
+    
 
     search_area = text_upper.replace("BANGKOK DONMUEANG", "DONMUEANG")
     found = []
