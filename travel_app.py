@@ -40,7 +40,11 @@ st.markdown("""
 st.title("✈️ 旅遊紀錄夥伴")
 
 # 🚀 Google Sheets 連線設定
-SHEET_ID = "1rjD0pOEltqRsv_NrcqQ9FKX_R2oe7IY3nJ0HHj57oI0"
+# --- 移除這行 ---
+# SHEET_ID = "1rjD0pOEltqRsv_NrcqQ9FKX_R2oe7IY3nJ0HHj57oI0"
+
+# --- 改成這行 ---
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1rjD0pOEltqRsv_NrcqQ9FKX_R2oe7IY3nJ0HHj57oI0/edit"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- 側邊欄：手動強制同步按鈕 ---
@@ -55,7 +59,8 @@ with st.sidebar:
 @st.cache_data(ttl=10) # 每10秒允許重新抓取一次，避免 API 流量爆掉
 def load_data_from_gs(worksheet_name, cols):
     try:
-        df = conn.read(spreadsheet=SHEET_ID, worksheet=worksheet_name)
+        # 💡 將 spreadsheet=SHEET_ID 修改為 spreadsheet=SHEET_URL
+        df = conn.read(spreadsheet=SHEET_URL, worksheet=worksheet_name) 
         if df.empty and len(df.columns) == 0:
             return pd.DataFrame(columns=cols)
         return df.dropna(how="all")
@@ -68,7 +73,9 @@ def save_data_to_gs(worksheet_name, df):
     for col in df_upload.columns:
         if pd.api.types.is_datetime64_any_dtype(df_upload[col]) or pd.api.types.is_object_dtype(df_upload[col]):
             df_upload[col] = df_upload[col].astype(str)
-    conn.update(spreadsheet=SHEET_ID, worksheet=worksheet_name, data=df_upload)
+            
+    # 💡 將 spreadsheet=SHEET_ID 修改為 spreadsheet=SHEET_URL
+    conn.update(spreadsheet=SHEET_URL, worksheet=worksheet_name, data=df_upload)
 
 # --- 全域資料庫初始化 (從雲端下載) ---
 expected_itinerary_cols = ["天數", "時間", "目的地", "交通方式", "備註"]
