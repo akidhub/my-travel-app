@@ -1,4 +1,4 @@
-# --- 版本：v40 (手機版體驗優化與行程顯示修復版) ---
+# --- 版本：v41 (按鈕 ID 衝突修復版) ---
 
 import streamlit as st
 import pandas as pd
@@ -295,7 +295,7 @@ with tab1:
     custom_day_idx = 1
     if "中間" in flight_role: custom_day_idx = st.selectbox("選擇加入至", options=range(1, get_trip_days() + 1), format_func=get_day_label)
 
-    if st.button("☁️ 儲存航班並同步至雲端"):
+    if st.button("☁️ 儲存航班並同步至雲端", key="btn_save_flight"):
         target_day_idx = 1 if "去程" in flight_role else (get_trip_days() if "回程" in flight_role else custom_day_idx)
         new_entry = pd.DataFrame([{"天數": target_day_idx, "時間": t_dep, "目的地": dep, "交通方式": "✈️ 飛機", "備註": f"{t_airline} {t_flight_no} 飛往 {arr}"}])
         st.session_state.itinerary = pd.concat([st.session_state.itinerary, new_entry], ignore_index=True)
@@ -322,36 +322,32 @@ with tab1:
 
 # === Tab 2: 行程 ===
 with tab2:
-    # 💡 [關鍵修正 1] 強制將「天數」整欄覆寫為純整數，徹底解決配對不到的問題
     if not st.session_state.itinerary.empty:
         st.session_state.itinerary["天數"] = pd.to_numeric(st.session_state.itinerary["天數"], errors='coerce').fillna(0).astype(int)
         max_day = max(get_trip_days(), int(st.session_state.itinerary["天數"].max()))
     else:
         max_day = get_trip_days()
 
-    # 💡 [關鍵修正 2] 廢除會觸發鍵盤的下拉選單，改用對手機超友善的「左右切換按鈕」
     if "selected_day_idx" not in st.session_state:
         st.session_state.selected_day_idx = 1
         
-    # 防止因刪除天數導致索引超出範圍
     if st.session_state.selected_day_idx > max_day:
         st.session_state.selected_day_idx = max_day
 
     col_prev, col_day, col_next = st.columns([1, 2, 1])
     with col_prev:
-        if st.button("◀ 上一天", use_container_width=True):
+        if st.button("◀ 上一天", use_container_width=True, key="btn_prev_day"):
             if st.session_state.selected_day_idx > 1:
                 st.session_state.selected_day_idx -= 1
                 st.rerun()
     with col_day:
         st.markdown(f"<div style='text-align: center; font-size: 1.1rem; padding-top: 5px; color: #007bff;'><b>{get_day_label(st.session_state.selected_day_idx)}</b></div>", unsafe_allow_html=True)
     with col_next:
-        if st.button("下一天 ▶", use_container_width=True):
+        if st.button("下一天 ▶", use_container_width=True, key="btn_next_day"):
             if st.session_state.selected_day_idx < max_day:
                 st.session_state.selected_day_idx += 1
                 st.rerun()
 
-    # 取得目前選擇的天數與日期
     selected_day_idx = st.session_state.selected_day_idx
     current_date = get_date_of_day(selected_day_idx)
     current_date_str = current_date.strftime("%Y-%m-%d")
@@ -371,7 +367,6 @@ with tab2:
                     st.warning(f"🛎️ **今日退房 (Check-out)**：{hotel.get('飯店名稱', '')} | 記得確認退房時間喔！")
             except: pass
 
-    # 💡 依照純整數進行篩選
     if not st.session_state.itinerary.empty:
         day_data = st.session_state.itinerary[st.session_state.itinerary["天數"] == selected_day_idx].copy()
         if not day_data.empty:
@@ -468,7 +463,8 @@ with tab3:
     else:
         st.markdown("<small>提示：您可以直接在下方表格內雙擊欄位來修改資料，甚至勾選左側核取方塊來刪除整列資料。完成後記得按下「💾 儲存修改」。</small>", unsafe_allow_html=True)
         edited_hotels = st.data_editor(st.session_state.hotels, column_order=["飯店名稱", "訂房平台", "入住日", "退房日", "地址"], num_rows="dynamic", use_container_width=True, key="hotel_editor")
-        if st.button("💾 將表格的修改同步至雲端"):
+        # 💡 [關鍵修正]：為這個按鈕加上專屬的 key="btn_sync_hotels"
+        if st.button("💾 將住宿表格的修改同步至雲端", key="btn_sync_hotels"):
             st.session_state.hotels = edited_hotels
             save_data_to_gs("住宿", st.session_state.hotels)
             st.success("住宿資料已成功修改並同步至 Google 表單！")
@@ -555,7 +551,8 @@ with tab5:
             
         st.markdown("<br>", unsafe_allow_html=True)
         edited_expenses = st.data_editor(st.session_state.expenses, column_order=["消費日期", "付款方式", "項目", "金額", "幣別", "備註"], num_rows="dynamic", use_container_width=True)
-        if st.button("💾 將表格的修改同步至雲端"):
+        # 💡 [關鍵修正]：為這個按鈕加上專屬的 key="btn_sync_expenses"
+        if st.button("💾 將記帳表格的修改同步至雲端", key="btn_sync_expenses"):
             st.session_state.expenses = edited_expenses
             save_data_to_gs("記帳", st.session_state.expenses)
             st.success("總覽表修改已成功同步至 Google 表單！")
