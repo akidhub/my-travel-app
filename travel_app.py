@@ -1,4 +1,4 @@
-# --- 版本：v37 (自動化增強版) ---
+# --- 版本：v38 (動態住宿與編輯強化版) ---
 
 import streamlit as st
 import pandas as pd
@@ -52,7 +52,7 @@ with st.sidebar:
         st.rerun()
 
 # --- 雲端資料庫讀寫模組 ---
-@st.cache_data(ttl=10) # 每10秒允許重新抓取一次，避免 API 流量爆掉
+@st.cache_data(ttl=10)
 def load_data_from_gs(worksheet_name, cols):
     try:
         df = conn.read(spreadsheet=SHEET_URL, worksheet=worksheet_name) 
@@ -63,15 +63,13 @@ def load_data_from_gs(worksheet_name, cols):
         return pd.DataFrame(columns=cols)
 
 def save_data_to_gs(worksheet_name, df):
-    # 將日期格式轉為字串以防 Google Sheets 格式錯誤
     df_upload = df.copy()
     for col in df_upload.columns:
         if pd.api.types.is_datetime64_any_dtype(df_upload[col]) or pd.api.types.is_object_dtype(df_upload[col]):
             df_upload[col] = df_upload[col].astype(str)
-            
     conn.update(spreadsheet=SHEET_URL, worksheet=worksheet_name, data=df_upload)
 
-# --- 全域資料庫初始化 (從雲端下載) ---
+# --- 全域資料庫初始化 ---
 expected_itinerary_cols = ["天數", "時間", "目的地", "交通方式", "備註"]
 expected_hotel_cols = ["飯店名稱", "訂房平台", "入住日", "退房日", "地址"] 
 expected_flight_cols = ["航空公司", "航班號碼", "出發地", "抵達地", "起飛時間", "降落時間", "日期"] 
@@ -94,7 +92,6 @@ AIRPORT_DB = {
     "NRT": "東京成田 (NRT)", "HND": "東京羽田 (HND)", "KIX": "大阪關西 (KIX)"
 }
 
-# --- 動態校正旅程的起始與結束日期 ---
 if "trip_start_date" not in st.session_state: st.session_state.trip_start_date = datetime.date.today()
 if "trip_end_date" not in st.session_state: st.session_state.trip_end_date = datetime.date.today() + datetime.timedelta(days=12)
 
@@ -137,20 +134,15 @@ def extract_ticket_info(file):
     
     text_upper = text.upper() 
     
-    # 💡 強化出發地與抵達地辨識 (包含航廈 TERMINAL 判斷)
     dept_term = re.search(r"(TPE|TAOYUAN|KHH|KAOHSIUNG)[\s\S]{0,50}?(TERMINAL\s*\d)", text_upper)
     if dept_term:
-        if "TPE" in dept_term.group(1) or "TAOYUAN" in dept_term.group(1):
-            info["dep_air"] = f"桃園機場 (TPE) {dept_term.group(2)}"
-        elif "KHH" in dept_term.group(1) or "KAOHSIUNG" in dept_term.group(1):
-            info["dep_air"] = f"高雄機場 (KHH) {dept_term.group(2)}"
+        if "TPE" in dept_term.group(1) or "TAOYUAN" in dept_term.group(1): info["dep_air"] = f"桃園機場 (TPE) {dept_term.group(2)}"
+        elif "KHH" in dept_term.group(1) or "KAOHSIUNG" in dept_term.group(1): info["dep_air"] = f"高雄機場 (KHH) {dept_term.group(2)}"
 
     arr_term = re.search(r"(DMK|DONMUEANG|BKK|SUVARNABHUMI)[\s\S]{0,50}?(TERMINAL\s*\d)", text_upper)
     if arr_term:
-        if "DMK" in arr_term.group(1) or "DONMUEANG" in arr_term.group(1):
-            info["arr_air"] = f"曼谷廊曼 (DMK) {arr_term.group(2)}"
-        elif "BKK" in arr_term.group(1) or "SUVARNABHUMI" in arr_term.group(1):
-            info["arr_air"] = f"曼谷蘇凡納布 (BKK) {arr_term.group(2)}"
+        if "DMK" in arr_term.group(1) or "DONMUEANG" in arr_term.group(1): info["arr_air"] = f"曼谷廊曼 (DMK) {arr_term.group(2)}"
+        elif "BKK" in arr_term.group(1) or "SUVARNABHUMI" in arr_term.group(1): info["arr_air"] = f"曼谷蘇凡納布 (BKK) {arr_term.group(2)}"
             
     if "CHINA AIRLINES" in text_upper or "中華航空" in text: info["airline"] = "中華航空"
     elif "VIETJET" in text_upper: info["airline"] = "泰越捷"
@@ -188,7 +180,6 @@ def extract_ticket_info(file):
     for p, city in found:
         if not cities or cities[-1] != city: cities.append(city)
         
-    # 確保不會覆蓋掉上面更精準的 TERMINAL 辨識結果
     if len(cities) >= 2: 
         if info["dep_air"] == "未偵測": info["dep_air"] = cities[0]
         if info["arr_air"] == "未偵測": info["arr_air"] = cities[1]
@@ -270,7 +261,6 @@ with tab1:
     st.subheader("✈️ 航班管理與記錄")
     uploaded_file = st.file_uploader("點擊或拖入機票 PDF 或 手機截圖", type=["pdf", "jpg", "jpeg", "png", "heic", "heif"])
     
-    # 💡 重置機制：如果上傳了新檔案，清空舊的航班解析資料
     if uploaded_file is not None:
         if "last_uploaded_filename" not in st.session_state or st.session_state.last_uploaded_filename != uploaded_file.name:
             st.session_state.last_uploaded_filename = uploaded_file.name
@@ -307,12 +297,10 @@ with tab1:
 
     if st.button("☁️ 儲存航班並同步至雲端"):
         target_day_idx = 1 if "去程" in flight_role else (get_trip_days() if "回程" in flight_role else custom_day_idx)
-        # 1. 寫入行程
         new_entry = pd.DataFrame([{"天數": target_day_idx, "時間": t_dep, "目的地": dep, "交通方式": "✈️ 飛機", "備註": f"{t_airline} {t_flight_no} 飛往 {arr}"}])
         st.session_state.itinerary = pd.concat([st.session_state.itinerary, new_entry], ignore_index=True)
         save_data_to_gs("行程", st.session_state.itinerary)
         
-        # 2. 寫入航班
         new_flight = pd.DataFrame([{"航空公司": t_airline, "航班號碼": t_flight_no, "出發地": dep, "抵達地": arr, "起飛時間": t_dep, "降落時間": t_arr, "日期": user_flight_date}])
         st.session_state.flights = pd.concat([st.session_state.flights, new_flight], ignore_index=True)
         save_data_to_gs("航班", st.session_state.flights)
@@ -334,30 +322,30 @@ with tab1:
 
 # === Tab 2: 行程 ===
 with tab2:
-    try:
-        max_day = int(st.session_state.itinerary["天數"].astype(int).max()) if not st.session_state.itinerary.empty else get_trip_days()
-    except:
-        max_day = get_trip_days()
+    try: max_day = int(st.session_state.itinerary["天數"].astype(int).max()) if not st.session_state.itinerary.empty else get_trip_days()
+    except: max_day = get_trip_days()
     options_range = range(1, max(get_trip_days(), max_day) + 1)
     
     selected_day_idx = st.selectbox("📅 請選擇要檢視的天數", options=options_range, format_func=get_day_label)
     current_date = get_date_of_day(selected_day_idx)
     st.markdown(f"### {get_day_label(selected_day_idx)} 行程")
     
-    # 💡 自動帶入當日航班與住宿邏輯 (完美整合進你的下拉選單結構)
     current_date_str = current_date.strftime("%Y-%m-%d")
     
-    # --- 自動帶入當日航班 ---
+    # 💡 行程最上方：顯示當日航班 與 今日退房 (Check-out) 提醒
     if "flights" in st.session_state and not st.session_state.flights.empty:
         day_flights = st.session_state.flights[st.session_state.flights["日期"].astype(str).str.contains(current_date_str, na=False)]
         for _, flight in day_flights.iterrows():
             st.info(f"✈️ **今日航班**：{flight.get('航空公司', '')} {flight.get('航班號碼', '')} | {flight.get('起飛時間', '')} 從 {flight.get('出發地', '')} ➔ {flight.get('抵達地', '')}")
 
-    # --- 自動帶入當日住宿 ---
     if "hotels" in st.session_state and not st.session_state.hotels.empty:
-        day_hotels = st.session_state.hotels[st.session_state.hotels["入住日"].astype(str).str.contains(current_date_str, na=False)]
-        for _, hotel in day_hotels.iterrows():
-            st.warning(f"🏨 **今日入住**：{hotel.get('飯店名稱', '')} | 📍 訂房平台：{hotel.get('訂房平台', '無')} | 備註：{hotel.get('地址', '')}")
+        for _, hotel in st.session_state.hotels.iterrows():
+            try:
+                out_date_str = str(hotel.get('退房日', ''))
+                if out_date_str.startswith(current_date_str):
+                    st.warning(f"🛎️ **今日退房 (Check-out)**：{hotel.get('飯店名稱', '')} | 記得確認退房時間喔！")
+            except: pass
+
     st.divider()
     
     # --- 顯示手動新增的行程 ---
@@ -384,6 +372,27 @@ with tab2:
                 save_data_to_gs("行程", st.session_state.itinerary)
                 st.rerun()
 
+    # 💡 行程最下方：顯示當晚住宿 (Stay)
+    st.divider()
+    st.markdown("#### 🌙 當晚住宿")
+    stay_found = False
+    if "hotels" in st.session_state and not st.session_state.hotels.empty:
+        for _, hotel in st.session_state.hotels.iterrows():
+            try:
+                in_date_str = str(hotel.get('入住日', ''))
+                out_date_str = str(hotel.get('退房日', ''))
+                if in_date_str and out_date_str:
+                    in_date = pd.to_datetime(in_date_str).date()
+                    out_date = pd.to_datetime(out_date_str).date()
+                    # 當天的日期如果介於 入住日(包含) 到 退房日(不包含) 之間，就代表今晚住這！
+                    if in_date <= current_date < out_date:
+                        plat_str = f" | 📍 平台：{hotel.get('訂房平台', '')}" if hotel.get('訂房平台', '') else ""
+                        st.markdown(f"<div class='hotel-card'>🏨 <b>{hotel.get('飯店名稱', '')}</b> {plat_str} <br><small>地址：{hotel.get('地址', '無')}</small></div>", unsafe_allow_html=True)
+                        stay_found = True
+            except: pass
+    if not stay_found:
+        st.write("這天晚上還沒有登記住宿喔！")
+
 # === Tab 3: 住宿管理 ===
 with tab3:
     st.subheader("🏨 住宿管理與紀錄")
@@ -397,7 +406,7 @@ with tab3:
             st.session_state.last_scanned_hotel_file = h_file.name
             st.rerun() 
     
-    with st.expander("📝 確認或手動輸入住宿資訊", expanded=True):
+    with st.expander("📝 確認或手動新增住宿資訊", expanded=True):
         with st.form("hotel_form"):
             h_name = st.text_input("飯店名稱*", value=st.session_state.temp_hotel.get("hotel_name", ""))
             h_platform = st.text_input("訂房平台", value=st.session_state.temp_hotel.get("platform", ""), placeholder="如: Agoda, Booking.com")
@@ -426,16 +435,17 @@ with tab3:
                         st.rerun()
                 else: st.error("請輸入飯店名稱！")
                     
-    st.markdown("### 🛏️ 雲端住宿清單")
+    st.markdown("### 🛏️ 雲端住宿清單與編輯")
     if st.session_state.hotels.empty: st.info("尚無住宿紀錄。")
     else:
-        for idx, row in st.session_state.hotels.iterrows():
-            plat_badge = f"<span class='platform-badge'>{row['訂房平台']}</span>" if pd.notna(row['訂房平台']) and row['訂房平台'] else ""
-            st.markdown(f"<div class='booking-card'><div class='dest-text'>🏨 {row['飯店名稱']} {plat_badge}</div><div class='detail-text'>📅 入住: {row['入住日']} ｜ 退房: {row['退房日']}</div><div class='detail-text'>📍 {row['地址']}</div></div>", unsafe_allow_html=True)
-            if st.button("🗑️ 刪除", key=f"del_h_{idx}"):
-                st.session_state.hotels = st.session_state.hotels.drop(idx).reset_index(drop=True)
-                save_data_to_gs("住宿", st.session_state.hotels)
-                st.rerun()
+        # 💡 取代原本的純顯示與刪除按鈕，改為直接內聯編輯的表格 (Data Editor)
+        st.markdown("<small>提示：您可以直接在下方表格內雙擊欄位來修改資料，甚至勾選左側核取方塊來刪除整列資料。完成後記得按下「💾 儲存修改」。</small>", unsafe_allow_html=True)
+        edited_hotels = st.data_editor(st.session_state.hotels, column_order=["飯店名稱", "訂房平台", "入住日", "退房日", "地址"], num_rows="dynamic", use_container_width=True, key="hotel_editor")
+        if st.button("💾 將表格的修改同步至雲端"):
+            st.session_state.hotels = edited_hotels
+            save_data_to_gs("住宿", st.session_state.hotels)
+            st.success("住宿資料已成功修改並同步至 Google 表單！")
+            st.rerun()
 
 # === Tab 4: 記帳 ===
 with tab4:
@@ -510,7 +520,6 @@ with tab5:
     if st.session_state.expenses.empty:
         st.info("目前還沒有任何花費紀錄喔！快去「記帳」頁面新增吧。")
     else:
-        # 強制將金額轉為數值以便計算
         st.session_state.expenses['金額'] = pd.to_numeric(st.session_state.expenses['金額'], errors='coerce').fillna(0)
         summary = st.session_state.expenses.groupby("幣別")["金額"].sum().reset_index()
         cols = st.columns(len(summary))
@@ -518,7 +527,6 @@ with tab5:
             cols[i].metric(label=f"總花費 ({row['幣別']})", value=f"{row['金額']:,.0f}")
             
         st.markdown("<br>", unsafe_allow_html=True)
-        # 用戶可以在這裡修改資料，並透過按鈕同步
         edited_expenses = st.data_editor(st.session_state.expenses, column_order=["消費日期", "付款方式", "項目", "金額", "幣別", "備註"], num_rows="dynamic", use_container_width=True)
         if st.button("💾 將表格的修改同步至雲端"):
             st.session_state.expenses = edited_expenses
