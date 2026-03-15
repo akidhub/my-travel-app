@@ -1,4 +1,4 @@
-# --- 版本：v38 (動態住宿與編輯強化版) ---
+# --- 版本：v39 (修復行程顯示與數值型態版) ---
 
 import streamlit as st
 import pandas as pd
@@ -322,8 +322,14 @@ with tab1:
 
 # === Tab 2: 行程 ===
 with tab2:
-    try: max_day = int(st.session_state.itinerary["天數"].astype(int).max()) if not st.session_state.itinerary.empty else get_trip_days()
-    except: max_day = get_trip_days()
+    # 💡 [修正] 安全轉換天數為純數字，避免 Google Sheets 回傳 float 字串造成的報錯
+    try: 
+        safe_itinerary_days = pd.to_numeric(st.session_state.itinerary["天數"], errors='coerce').fillna(0).astype(int)
+        max_day = int(safe_itinerary_days.max()) if not safe_itinerary_days.empty else get_trip_days()
+    except: 
+        max_day = get_trip_days()
+        safe_itinerary_days = pd.Series([0]) # 避免錯誤
+
     options_range = range(1, max(get_trip_days(), max_day) + 1)
     
     selected_day_idx = st.selectbox("📅 請選擇要檢視的天數", options=options_range, format_func=get_day_label)
@@ -332,7 +338,6 @@ with tab2:
     
     current_date_str = current_date.strftime("%Y-%m-%d")
     
-    # 💡 行程最上方：顯示當日航班 與 今日退房 (Check-out) 提醒
     if "flights" in st.session_state and not st.session_state.flights.empty:
         day_flights = st.session_state.flights[st.session_state.flights["日期"].astype(str).str.contains(current_date_str, na=False)]
         for _, flight in day_flights.iterrows():
@@ -348,8 +353,14 @@ with tab2:
 
     st.divider()
     
-    # --- 顯示手動新增的行程 ---
-    day_data = st.session_state.itinerary[st.session_state.itinerary["天數"].astype(str) == str(selected_day_idx)].sort_values(by="時間")
+    # 💡 [修正] 以純數字的安全方式篩選當日行程
+    if not st.session_state.itinerary.empty:
+        day_data = st.session_state.itinerary[safe_itinerary_days == selected_day_idx].copy()
+        if not day_data.empty:
+            day_data = day_data.sort_values(by="時間")
+    else:
+        day_data = pd.DataFrame()
+
     if day_data.empty: st.info("⛱️ 這天還沒有安排行程喔！請從下方新增。")
     else:
         for idx, row in day_data.iterrows():
@@ -372,7 +383,6 @@ with tab2:
                 save_data_to_gs("行程", st.session_state.itinerary)
                 st.rerun()
 
-    # 💡 行程最下方：顯示當晚住宿 (Stay)
     st.divider()
     st.markdown("#### 🌙 當晚住宿")
     stay_found = False
@@ -384,7 +394,6 @@ with tab2:
                 if in_date_str and out_date_str:
                     in_date = pd.to_datetime(in_date_str).date()
                     out_date = pd.to_datetime(out_date_str).date()
-                    # 當天的日期如果介於 入住日(包含) 到 退房日(不包含) 之間，就代表今晚住這！
                     if in_date <= current_date < out_date:
                         plat_str = f" | 📍 平台：{hotel.get('訂房平台', '')}" if hotel.get('訂房平台', '') else ""
                         st.markdown(f"<div class='hotel-card'>🏨 <b>{hotel.get('飯店名稱', '')}</b> {plat_str} <br><small>地址：{hotel.get('地址', '無')}</small></div>", unsafe_allow_html=True)
@@ -438,7 +447,6 @@ with tab3:
     st.markdown("### 🛏️ 雲端住宿清單與編輯")
     if st.session_state.hotels.empty: st.info("尚無住宿紀錄。")
     else:
-        # 💡 取代原本的純顯示與刪除按鈕，改為直接內聯編輯的表格 (Data Editor)
         st.markdown("<small>提示：您可以直接在下方表格內雙擊欄位來修改資料，甚至勾選左側核取方塊來刪除整列資料。完成後記得按下「💾 儲存修改」。</small>", unsafe_allow_html=True)
         edited_hotels = st.data_editor(st.session_state.hotels, column_order=["飯店名稱", "訂房平台", "入住日", "退房日", "地址"], num_rows="dynamic", use_container_width=True, key="hotel_editor")
         if st.button("💾 將表格的修改同步至雲端"):
