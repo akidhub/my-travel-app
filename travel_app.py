@@ -1,4 +1,4 @@
-# --- 版本：v42 (終極防呆防撞名與索引修復版) ---
+# --- 版本：v43 (換匯記錄全動態編輯版) ---
 
 import streamlit as st
 import pandas as pd
@@ -69,7 +69,7 @@ def save_data_to_gs(worksheet_name, df):
             df_upload[col] = df_upload[col].astype(str)
     conn.update(spreadsheet=SHEET_URL, worksheet=worksheet_name, data=df_upload)
 
-# --- 全域資料庫初始化 (💡 加入 reset_index 防止索引錯亂) ---
+# --- 全域資料庫初始化 (加入 reset_index 防止索引錯亂) ---
 expected_itinerary_cols = ["天數", "時間", "目的地", "交通方式", "備註"]
 expected_hotel_cols = ["飯店名稱", "訂房平台", "入住日", "退房日", "地址"] 
 expected_flight_cols = ["航空公司", "航班號碼", "出發地", "抵達地", "起飛時間", "降落時間", "日期"] 
@@ -379,7 +379,6 @@ with tab2:
     else:
         for idx, row in day_data.iterrows():
             st.markdown(f"<div class='itinerary-card'><div class='time-text'>{row['時間']}</div><div class='dest-text'>📍 {row['目的地']}</div><div class='detail-text'>{row['交通方式']} ｜ 📝 {row['備註']}</div></div>", unsafe_allow_html=True)
-            # 💡 [關鍵修復] 按鈕 ID 加上專屬前綴字，徹底防止 DuplicateElementId
             if st.button("🗑️ 刪除", key=f"del_itinerary_row_{idx}"):
                 st.session_state.itinerary = st.session_state.itinerary.drop(idx).reset_index(drop=True)
                 save_data_to_gs("行程", st.session_state.itinerary)
@@ -534,9 +533,18 @@ with tab5:
                 else:
                     st.error("請輸入正確金額")
                     
-    if not st.session_state.exchanges.empty:
-        for idx, row in st.session_state.exchanges.iterrows():
-            st.markdown(f"<div class='exchange-card'><strong>{row['日期']} 換錢紀錄</strong><br>付出 {row['換出金額']} {row['換出幣別']} ➔ 得到 <b>{row['獲得金額']} THB</b> <br><small>📝 匯率: {row['匯率']}</small></div>", unsafe_allow_html=True)
+    # 💡 [新增] 換匯記錄改為與記帳相同的互動式表格
+    st.markdown("#### 🔄 雲端換匯清單與編輯")
+    if st.session_state.exchanges.empty:
+        st.info("尚無換匯紀錄。")
+    else:
+        st.markdown("<small>提示：雙擊下方表格來修改資料，或勾選最左側的核取方塊來刪除整列紀錄。完成後記得點擊「儲存換匯修改」。</small>", unsafe_allow_html=True)
+        edited_exchanges = st.data_editor(st.session_state.exchanges, column_order=["日期", "換入幣別", "換出金額", "換出幣別", "獲得金額", "匯率"], num_rows="dynamic", use_container_width=True, key="exchange_editor")
+        if st.button("💾 將換匯表格的修改同步至雲端", key="btn_sync_exchanges"):
+            st.session_state.exchanges = edited_exchanges
+            save_data_to_gs("換匯", st.session_state.exchanges)
+            st.success("換匯資料已成功修改並同步至 Google 表單！")
+            st.rerun()
 
     st.markdown("---")
     st.markdown("### 📊 花費雲端總覽")
@@ -550,7 +558,7 @@ with tab5:
             cols[i].metric(label=f"總花費 ({row['幣別']})", value=f"{row['金額']:,.0f}")
             
         st.markdown("<br>", unsafe_allow_html=True)
-        edited_expenses = st.data_editor(st.session_state.expenses, column_order=["消費日期", "付款方式", "項目", "金額", "幣別", "備註"], num_rows="dynamic", use_container_width=True)
+        edited_expenses = st.data_editor(st.session_state.expenses, column_order=["消費日期", "付款方式", "項目", "金額", "幣別", "備註"], num_rows="dynamic", use_container_width=True, key="expense_editor")
         if st.button("💾 將記帳表格的修改同步至雲端", key="btn_sync_expenses"):
             st.session_state.expenses = edited_expenses
             save_data_to_gs("記帳", st.session_state.expenses)
