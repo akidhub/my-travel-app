@@ -1,4 +1,4 @@
-# --- 版本：v39 (修復行程顯示與數值型態版) ---
+# --- 版本：v40 (手機版體驗優化與行程顯示修復版) ---
 
 import streamlit as st
 import pandas as pd
@@ -322,21 +322,41 @@ with tab1:
 
 # === Tab 2: 行程 ===
 with tab2:
-    # 💡 [修正] 安全轉換天數為純數字，避免 Google Sheets 回傳 float 字串造成的報錯
-    try: 
-        safe_itinerary_days = pd.to_numeric(st.session_state.itinerary["天數"], errors='coerce').fillna(0).astype(int)
-        max_day = int(safe_itinerary_days.max()) if not safe_itinerary_days.empty else get_trip_days()
-    except: 
+    # 💡 [關鍵修正 1] 強制將「天數」整欄覆寫為純整數，徹底解決配對不到的問題
+    if not st.session_state.itinerary.empty:
+        st.session_state.itinerary["天數"] = pd.to_numeric(st.session_state.itinerary["天數"], errors='coerce').fillna(0).astype(int)
+        max_day = max(get_trip_days(), int(st.session_state.itinerary["天數"].max()))
+    else:
         max_day = get_trip_days()
-        safe_itinerary_days = pd.Series([0]) # 避免錯誤
 
-    options_range = range(1, max(get_trip_days(), max_day) + 1)
-    
-    selected_day_idx = st.selectbox("📅 請選擇要檢視的天數", options=options_range, format_func=get_day_label)
+    # 💡 [關鍵修正 2] 廢除會觸發鍵盤的下拉選單，改用對手機超友善的「左右切換按鈕」
+    if "selected_day_idx" not in st.session_state:
+        st.session_state.selected_day_idx = 1
+        
+    # 防止因刪除天數導致索引超出範圍
+    if st.session_state.selected_day_idx > max_day:
+        st.session_state.selected_day_idx = max_day
+
+    col_prev, col_day, col_next = st.columns([1, 2, 1])
+    with col_prev:
+        if st.button("◀ 上一天", use_container_width=True):
+            if st.session_state.selected_day_idx > 1:
+                st.session_state.selected_day_idx -= 1
+                st.rerun()
+    with col_day:
+        st.markdown(f"<div style='text-align: center; font-size: 1.1rem; padding-top: 5px; color: #007bff;'><b>{get_day_label(st.session_state.selected_day_idx)}</b></div>", unsafe_allow_html=True)
+    with col_next:
+        if st.button("下一天 ▶", use_container_width=True):
+            if st.session_state.selected_day_idx < max_day:
+                st.session_state.selected_day_idx += 1
+                st.rerun()
+
+    # 取得目前選擇的天數與日期
+    selected_day_idx = st.session_state.selected_day_idx
     current_date = get_date_of_day(selected_day_idx)
-    st.markdown(f"### {get_day_label(selected_day_idx)} 行程")
-    
     current_date_str = current_date.strftime("%Y-%m-%d")
+    
+    st.divider()
     
     if "flights" in st.session_state and not st.session_state.flights.empty:
         day_flights = st.session_state.flights[st.session_state.flights["日期"].astype(str).str.contains(current_date_str, na=False)]
@@ -351,17 +371,16 @@ with tab2:
                     st.warning(f"🛎️ **今日退房 (Check-out)**：{hotel.get('飯店名稱', '')} | 記得確認退房時間喔！")
             except: pass
 
-    st.divider()
-    
-    # 💡 [修正] 以純數字的安全方式篩選當日行程
+    # 💡 依照純整數進行篩選
     if not st.session_state.itinerary.empty:
-        day_data = st.session_state.itinerary[safe_itinerary_days == selected_day_idx].copy()
+        day_data = st.session_state.itinerary[st.session_state.itinerary["天數"] == selected_day_idx].copy()
         if not day_data.empty:
             day_data = day_data.sort_values(by="時間")
     else:
         day_data = pd.DataFrame()
 
-    if day_data.empty: st.info("⛱️ 這天還沒有安排行程喔！請從下方新增。")
+    if day_data.empty: 
+        st.info("⛱️ 這天還沒有安排行程喔！請從下方新增。")
     else:
         for idx, row in day_data.iterrows():
             st.markdown(f"<div class='itinerary-card'><div class='time-text'>{row['時間']}</div><div class='dest-text'>📍 {row['目的地']}</div><div class='detail-text'>{row['交通方式']} ｜ 📝 {row['備註']}</div></div>", unsafe_allow_html=True)
