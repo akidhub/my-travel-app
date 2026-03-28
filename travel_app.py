@@ -1,4 +1,4 @@
-# --- 版本：v43 (換匯記錄全動態編輯版) ---
+# --- 版本：v44 (行程進階編輯與 PPT 大綱匯出版) ---
 
 import streamlit as st
 import pandas as pd
@@ -69,7 +69,7 @@ def save_data_to_gs(worksheet_name, df):
             df_upload[col] = df_upload[col].astype(str)
     conn.update(spreadsheet=SHEET_URL, worksheet=worksheet_name, data=df_upload)
 
-# --- 全域資料庫初始化 (加入 reset_index 防止索引錯亂) ---
+# --- 全域資料庫初始化 ---
 expected_itinerary_cols = ["天數", "時間", "目的地", "交通方式", "備註"]
 expected_hotel_cols = ["飯店名稱", "訂房平台", "入住日", "退房日", "地址"] 
 expected_flight_cols = ["航空公司", "航班號碼", "出發地", "抵達地", "起飛時間", "降落時間", "日期"] 
@@ -416,6 +416,48 @@ with tab2:
     if not stay_found:
         st.write("這天晚上還沒有登記住宿喔！")
 
+    # 💡 [新增] 互動式行程編輯器與 PPT 大綱匯出功能
+    st.divider()
+    st.markdown("### ⚙️ 雲端行程編輯與匯出")
+    with st.expander("✏️ 編輯全部行程清單與匯出簡報大綱", expanded=False):
+        st.markdown("<small>提示：雙擊下方表格來修改資料，勾選最左邊的核取方塊可刪除整列紀錄。完成後請點擊「💾 將行程表格的修改同步至雲端」。</small>", unsafe_allow_html=True)
+        edited_itinerary = st.data_editor(st.session_state.itinerary, column_order=["天數", "時間", "目的地", "交通方式", "備註"], num_rows="dynamic", use_container_width=True, key="itinerary_editor")
+        
+        if st.button("💾 將行程表格的修改同步至雲端", key="btn_sync_itinerary"):
+            st.session_state.itinerary = edited_itinerary
+            save_data_to_gs("行程", st.session_state.itinerary)
+            st.success("行程資料已成功修改並同步至 Google 表單！")
+            st.rerun()
+            
+        st.markdown("---")
+        st.markdown("#### 📄 匯出為 PPT 簡報大綱檔")
+        st.write("利用支援「大綱匯入」的簡報軟體（如 PowerPoint：點選「常用」➔「新增投影片」➔「從大綱插入投影片」），可一鍵將行程轉換為簡報排版！")
+        
+        # 自動產生符合 PPT 大綱格式的文字 (利用 Tab 縮排控制階層)
+        export_lines = []
+        if not st.session_state.itinerary.empty:
+            sorted_itinerary = st.session_state.itinerary.sort_values(by=["天數", "時間"])
+            for day_idx, group in sorted_itinerary.groupby("天數"):
+                day_label = get_day_label(int(day_idx))
+                # 這會變成大標題投影片
+                export_lines.append(f"{day_label} - 行程總覽")
+                export_lines.append(f"\t準備出發！")
+                # 這會變成各個行程的單獨投影片
+                for _, row in group.iterrows():
+                    export_lines.append(f"【{row['時間']}】 {row['目的地']}")
+                    export_lines.append(f"\t交通方式：{row['交通方式']}")
+                    if pd.notna(row['備註']) and str(row['備註']).strip():
+                        export_lines.append(f"\t備註：{row['備註']}")
+                        
+        export_text = "\n".join(export_lines)
+        st.download_button(
+            label="📥 下載 PPT 簡報大綱檔 (.txt)",
+            data=export_text,
+            file_name="旅遊行程簡報大綱.txt",
+            mime="text/plain",
+            key="btn_export_itinerary"
+        )
+
 # === Tab 3: 住宿管理 ===
 with tab3:
     st.subheader("🏨 住宿管理與紀錄")
@@ -533,7 +575,6 @@ with tab5:
                 else:
                     st.error("請輸入正確金額")
                     
-    # 💡 [新增] 換匯記錄改為與記帳相同的互動式表格
     st.markdown("#### 🔄 雲端換匯清單與編輯")
     if st.session_state.exchanges.empty:
         st.info("尚無換匯紀錄。")
