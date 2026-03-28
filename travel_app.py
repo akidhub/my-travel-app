@@ -1,4 +1,4 @@
-# --- 版本：v44 (行程進階編輯與 PPT 大綱匯出版) ---
+# --- 版本：v45 (行程自動排序與航班時間補全版) ---
 
 import streamlit as st
 import pandas as pd
@@ -354,10 +354,11 @@ with tab2:
     
     st.divider()
     
+    # 💡 [修改] 在這裡讓今日航班的提醒，一併呈現「起飛時間 - 降落時間」
     if "flights" in st.session_state and not st.session_state.flights.empty:
         day_flights = st.session_state.flights[st.session_state.flights["日期"].astype(str).str.contains(current_date_str, na=False)]
         for _, flight in day_flights.iterrows():
-            st.info(f"✈️ **今日航班**：{flight.get('航空公司', '')} {flight.get('航班號碼', '')} | {flight.get('起飛時間', '')} 從 {flight.get('出發地', '')} ➔ {flight.get('抵達地', '')}")
+            st.info(f"✈️ **今日航班**：{flight.get('航空公司', '')} {flight.get('航班號碼', '')} | ⏰ {flight.get('起飛時間', '')} - {flight.get('降落時間', '')} | 🛫 {flight.get('出發地', '')} ➔ 🛬 {flight.get('抵達地', '')}")
 
     if "hotels" in st.session_state and not st.session_state.hotels.empty:
         for _, hotel in st.session_state.hotels.iterrows():
@@ -416,15 +417,19 @@ with tab2:
     if not stay_found:
         st.write("這天晚上還沒有登記住宿喔！")
 
-    # 💡 [新增] 互動式行程編輯器與 PPT 大綱匯出功能
     st.divider()
     st.markdown("### ⚙️ 雲端行程編輯與匯出")
     with st.expander("✏️ 編輯全部行程清單與匯出簡報大綱", expanded=False):
+        # 💡 [修改] 在呈現互動式資料表格之前，先強制讓資料依照「天數」與「時間」進行排序！
+        if not st.session_state.itinerary.empty:
+            st.session_state.itinerary = st.session_state.itinerary.sort_values(by=["天數", "時間"]).reset_index(drop=True)
+
         st.markdown("<small>提示：雙擊下方表格來修改資料，勾選最左邊的核取方塊可刪除整列紀錄。完成後請點擊「💾 將行程表格的修改同步至雲端」。</small>", unsafe_allow_html=True)
         edited_itinerary = st.data_editor(st.session_state.itinerary, column_order=["天數", "時間", "目的地", "交通方式", "備註"], num_rows="dynamic", use_container_width=True, key="itinerary_editor")
         
         if st.button("💾 將行程表格的修改同步至雲端", key="btn_sync_itinerary"):
-            st.session_state.itinerary = edited_itinerary
+            # 儲存時一樣再確保一次排序整齊
+            st.session_state.itinerary = edited_itinerary.sort_values(by=["天數", "時間"]).reset_index(drop=True)
             save_data_to_gs("行程", st.session_state.itinerary)
             st.success("行程資料已成功修改並同步至 Google 表單！")
             st.rerun()
@@ -433,16 +438,13 @@ with tab2:
         st.markdown("#### 📄 匯出為 PPT 簡報大綱檔")
         st.write("利用支援「大綱匯入」的簡報軟體（如 PowerPoint：點選「常用」➔「新增投影片」➔「從大綱插入投影片」），可一鍵將行程轉換為簡報排版！")
         
-        # 自動產生符合 PPT 大綱格式的文字 (利用 Tab 縮排控制階層)
         export_lines = []
         if not st.session_state.itinerary.empty:
             sorted_itinerary = st.session_state.itinerary.sort_values(by=["天數", "時間"])
             for day_idx, group in sorted_itinerary.groupby("天數"):
                 day_label = get_day_label(int(day_idx))
-                # 這會變成大標題投影片
                 export_lines.append(f"{day_label} - 行程總覽")
                 export_lines.append(f"\t準備出發！")
-                # 這會變成各個行程的單獨投影片
                 for _, row in group.iterrows():
                     export_lines.append(f"【{row['時間']}】 {row['目的地']}")
                     export_lines.append(f"\t交通方式：{row['交通方式']}")
