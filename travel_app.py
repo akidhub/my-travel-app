@@ -1,4 +1,4 @@
-# --- 版本：v45 (行程自動排序與航班時間補全版) ---
+# --- 版本：v46 (新增日期欄位與日曆選擇器版) ---
 
 import streamlit as st
 import pandas as pd
@@ -70,7 +70,8 @@ def save_data_to_gs(worksheet_name, df):
     conn.update(spreadsheet=SHEET_URL, worksheet=worksheet_name, data=df_upload)
 
 # --- 全域資料庫初始化 ---
-expected_itinerary_cols = ["天數", "時間", "目的地", "交通方式", "備註"]
+# 💡 [修改] 加入了「日期」欄位
+expected_itinerary_cols = ["日期", "天數", "時間", "目的地", "交通方式", "備註"]
 expected_hotel_cols = ["飯店名稱", "訂房平台", "入住日", "退房日", "地址"] 
 expected_flight_cols = ["航空公司", "航班號碼", "出發地", "抵達地", "起飛時間", "降落時間", "日期"] 
 expected_expense_cols = ["消費日期", "付款方式", "項目", "金額", "幣別", "備註"]
@@ -297,7 +298,8 @@ with tab1:
 
     if st.button("☁️ 儲存航班並同步至雲端", key="btn_save_flight"):
         target_day_idx = 1 if "去程" in flight_role else (get_trip_days() if "回程" in flight_role else custom_day_idx)
-        new_entry = pd.DataFrame([{"天數": target_day_idx, "時間": t_dep, "目的地": dep, "交通方式": "✈️ 飛機", "備註": f"{t_airline} {t_flight_no} 飛往 {arr}"}])
+        # 💡 [修改] 寫入時補上「日期」欄位
+        new_entry = pd.DataFrame([{"日期": user_flight_date, "天數": target_day_idx, "時間": t_dep, "目的地": dep, "交通方式": "✈️ 飛機", "備註": f"{t_airline} {t_flight_no} 飛往 {arr}"}])
         st.session_state.itinerary = pd.concat([st.session_state.itinerary, new_entry], ignore_index=True)
         save_data_to_gs("行程", st.session_state.itinerary)
         
@@ -322,39 +324,29 @@ with tab1:
 
 # === Tab 2: 行程 ===
 with tab2:
+    # 💡 [修改] 確保已將雲端的「日期」欄位轉成 datetime date 物件，方便後續比對與日曆篩選
     if not st.session_state.itinerary.empty:
         st.session_state.itinerary["天數"] = pd.to_numeric(st.session_state.itinerary["天數"], errors='coerce').fillna(0).astype(int)
-        max_day = max(get_trip_days(), int(st.session_state.itinerary["天數"].max()))
-    else:
-        max_day = get_trip_days()
+        st.session_state.itinerary["日期"] = pd.to_datetime(st.session_state.itinerary["日期"], errors='coerce').dt.date
 
-    if "selected_day_idx" not in st.session_state:
-        st.session_state.selected_day_idx = 1
+    # 💡 [修改] 改用日曆選擇器 (Date Picker) 替換掉原本的上下頁按鈕
+    default_date = st.session_state.trip_start_date
+    if "selected_date" in st.session_state:
+        default_date = st.session_state.selected_date
         
-    if st.session_state.selected_day_idx > max_day:
-        st.session_state.selected_day_idx = max_day
-
-    col_prev, col_day, col_next = st.columns([1, 2, 1])
-    with col_prev:
-        if st.button("◀ 上一天", use_container_width=True, key="btn_prev_day"):
-            if st.session_state.selected_day_idx > 1:
-                st.session_state.selected_day_idx -= 1
-                st.rerun()
-    with col_day:
-        st.markdown(f"<div style='text-align: center; font-size: 1.1rem; padding-top: 5px; color: #007bff;'><b>{get_day_label(st.session_state.selected_day_idx)}</b></div>", unsafe_allow_html=True)
-    with col_next:
-        if st.button("下一天 ▶", use_container_width=True, key="btn_next_day"):
-            if st.session_state.selected_day_idx < max_day:
-                st.session_state.selected_day_idx += 1
-                st.rerun()
-
-    selected_day_idx = st.session_state.selected_day_idx
-    current_date = get_date_of_day(selected_day_idx)
+    selected_date = st.date_input("📅 選擇要查看的行程日期", value=default_date)
+    st.session_state.selected_date = selected_date
+    
+    current_date = selected_date
     current_date_str = current_date.strftime("%Y-%m-%d")
+    selected_day_idx = (current_date - st.session_state.trip_start_date).days + 1
+    
+    weekdays = ["一", "二", "三", "四", "五", "六", "日"]
+    day_label_text = f"第 {max(1, selected_day_idx)} 天 ({current_date.strftime('%m/%d')} 星期{weekdays[current_date.weekday()]})"
+    st.markdown(f"<div style='text-align: center; font-size: 1.2rem; padding-top: 10px; color: #007bff;'><b>{day_label_text}</b></div>", unsafe_allow_html=True)
     
     st.divider()
     
-    # 💡 [修改] 在這裡讓今日航班的提醒，一併呈現「起飛時間 - 降落時間」
     if "flights" in st.session_state and not st.session_state.flights.empty:
         day_flights = st.session_state.flights[st.session_state.flights["日期"].astype(str).str.contains(current_date_str, na=False)]
         for _, flight in day_flights.iterrows():
@@ -368,8 +360,9 @@ with tab2:
                     st.warning(f"🛎️ **今日退房 (Check-out)**：{hotel.get('飯店名稱', '')} | 記得確認退房時間喔！")
             except: pass
 
+    # 💡 [修改] 透過使用者選擇的「日期」篩選行程，而不是透過「天數」
     if not st.session_state.itinerary.empty:
-        day_data = st.session_state.itinerary[st.session_state.itinerary["天數"] == selected_day_idx].copy()
+        day_data = st.session_state.itinerary[st.session_state.itinerary["日期"] == current_date].copy()
         if not day_data.empty:
             day_data = day_data.sort_values(by="時間")
     else:
@@ -381,19 +374,22 @@ with tab2:
         for idx, row in day_data.iterrows():
             st.markdown(f"<div class='itinerary-card'><div class='time-text'>{row['時間']}</div><div class='dest-text'>📍 {row['目的地']}</div><div class='detail-text'>{row['交通方式']} ｜ 📝 {row['備註']}</div></div>", unsafe_allow_html=True)
             if st.button("🗑️ 刪除", key=f"del_itinerary_row_{idx}"):
-                st.session_state.itinerary = st.session_state.itinerary.drop(idx).reset_index(drop=True)
+                # 這裡使用原表(st.session_state.itinerary)的 index 來刪除
+                original_idx = row.name 
+                st.session_state.itinerary = st.session_state.itinerary.drop(original_idx).reset_index(drop=True)
                 save_data_to_gs("行程", st.session_state.itinerary)
                 st.rerun()
                 
-    with st.expander(f"➕ 新增行程至此日", expanded=False):
-        with st.form(key=f"form_add_itinerary_{selected_day_idx}"):
+    with st.expander(f"➕ 新增行程至此日 ({current_date_str})", expanded=False):
+        with st.form(key=f"form_add_itinerary_{current_date_str}"):
             col_time, col_dest = st.columns(2)
             t_time = col_time.time_input("設定時間", value=datetime.time(9, 0)) 
             t_dest = col_dest.text_input("目的地 (如: 淺草寺)")
             t_trans = st.selectbox("交通方式", ["🚶 步行", "🚇 地鐵 / 捷運", "🚌 公車", "🚕 計程車 / Grab", "🚗 自駕 / 包車", "✈️ 飛機"])
             t_note = st.text_input("備註 (如: 車程約15分)")
             if st.form_submit_button("☁️ 同步新增至雲端") and t_dest:
-                new_item = pd.DataFrame([{"天數": selected_day_idx, "時間": t_time.strftime("%H:%M"), "目的地": t_dest, "交通方式": t_trans, "備註": t_note}])
+                # 💡 [修改] 補上「日期」欄位
+                new_item = pd.DataFrame([{"日期": current_date, "天數": selected_day_idx, "時間": t_time.strftime("%H:%M"), "目的地": t_dest, "交通方式": t_trans, "備註": t_note}])
                 st.session_state.itinerary = pd.concat([st.session_state.itinerary, new_item], ignore_index=True)
                 save_data_to_gs("行程", st.session_state.itinerary)
                 st.rerun()
@@ -420,16 +416,16 @@ with tab2:
     st.divider()
     st.markdown("### ⚙️ 雲端行程編輯與匯出")
     with st.expander("✏️ 編輯全部行程清單與匯出簡報大綱", expanded=False):
-        # 💡 [修改] 在呈現互動式資料表格之前，先強制讓資料依照「天數」與「時間」進行排序！
+        # 💡 [修改] 加入日期排序，並在編輯器顯示「日期」欄位
         if not st.session_state.itinerary.empty:
-            st.session_state.itinerary = st.session_state.itinerary.sort_values(by=["天數", "時間"]).reset_index(drop=True)
+            st.session_state.itinerary = st.session_state.itinerary.sort_values(by=["日期", "時間"]).reset_index(drop=True)
 
         st.markdown("<small>提示：雙擊下方表格來修改資料，勾選最左邊的核取方塊可刪除整列紀錄。完成後請點擊「💾 將行程表格的修改同步至雲端」。</small>", unsafe_allow_html=True)
-        edited_itinerary = st.data_editor(st.session_state.itinerary, column_order=["天數", "時間", "目的地", "交通方式", "備註"], num_rows="dynamic", use_container_width=True, key="itinerary_editor")
+        edited_itinerary = st.data_editor(st.session_state.itinerary, column_order=["日期", "天數", "時間", "目的地", "交通方式", "備註"], num_rows="dynamic", use_container_width=True, key="itinerary_editor")
         
         if st.button("💾 將行程表格的修改同步至雲端", key="btn_sync_itinerary"):
-            # 儲存時一樣再確保一次排序整齊
-            st.session_state.itinerary = edited_itinerary.sort_values(by=["天數", "時間"]).reset_index(drop=True)
+            # 儲存時再次確保以日期與時間排序整齊
+            st.session_state.itinerary = edited_itinerary.sort_values(by=["日期", "時間"]).reset_index(drop=True)
             save_data_to_gs("行程", st.session_state.itinerary)
             st.success("行程資料已成功修改並同步至 Google 表單！")
             st.rerun()
@@ -440,10 +436,16 @@ with tab2:
         
         export_lines = []
         if not st.session_state.itinerary.empty:
-            sorted_itinerary = st.session_state.itinerary.sort_values(by=["天數", "時間"])
-            for day_idx, group in sorted_itinerary.groupby("天數"):
-                day_label = get_day_label(int(day_idx))
-                export_lines.append(f"{day_label} - 行程總覽")
+            sorted_itinerary = st.session_state.itinerary.sort_values(by=["日期", "時間"])
+            # 💡 [修改] 改以「日期」進行 GroupBy 並匯出
+            for date_val, group in sorted_itinerary.groupby("日期"):
+                try:
+                    c_day_idx = (date_val - st.session_state.trip_start_date).days + 1
+                    ppt_day_label = f"第 {max(1, c_day_idx)} 天 ({date_val.strftime('%m/%d')})"
+                except:
+                    ppt_day_label = str(date_val)
+                    
+                export_lines.append(f"{ppt_day_label} - 行程總覽")
                 export_lines.append(f"\t準備出發！")
                 for _, row in group.iterrows():
                     export_lines.append(f"【{row['時間']}】 {row['目的地']}")
