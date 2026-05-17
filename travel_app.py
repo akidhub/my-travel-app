@@ -324,11 +324,37 @@ with tab1:
 
 # === Tab 2: 行程 ===
 with tab2:
-    # 💡 [修改] 確保已將雲端的「日期」欄位轉成 datetime date 物件，方便後續比對與日曆篩選
     if not st.session_state.itinerary.empty:
-        st.session_state.itinerary["天數"] = pd.to_numeric(st.session_state.itinerary["天數"], errors='coerce').fillna(0).astype(int)
+        # 1. 確保「天數」是數字格式，若空缺則預設為 1
+        if "天數" not in st.session_state.itinerary.columns:
+            st.session_state.itinerary["天數"] = 1
+        st.session_state.itinerary["天數"] = pd.to_numeric(st.session_state.itinerary["天數"], errors='coerce').fillna(1).astype(int)
+
+        # 2. 確保有「日期」欄位，沒有的話先建一個空值欄位
+        if "日期" not in st.session_state.itinerary.columns:
+            st.session_state.itinerary["日期"] = pd.NaT
+
+        # 3. 將表單內既有的「日期」先嘗試轉為 datetime 格式，無法轉換或空白的會變成 NaT (Not a Time)
+        st.session_state.itinerary["日期"] = pd.to_datetime(st.session_state.itinerary["日期"], errors='coerce')
+
+        # 4. 定義防呆處理：優先保留手動輸入的日期，只有在日期為空 (NaT) 時，才用「天數」推算
+        def fill_missing_date(row):
+            if pd.isna(row["日期"]):
+                return st.session_state.trip_start_date + datetime.timedelta(days=int(row["天數"]) - 1)
+            return row["日期"].date() # 原本已有手動輸入日期的，直接保留
+
+        # 套用防呆處理
+        st.session_state.itinerary["日期"] = st.session_state.itinerary.apply(fill_missing_date, axis=1)
+
+        # 5. 最後統一確保整欄的型態都是純日期 (date) 物件，避免後續比對出錯
         st.session_state.itinerary["日期"] = pd.to_datetime(st.session_state.itinerary["日期"], errors='coerce').dt.date
 
+    # 💡 接著接續原本的日曆選擇器邏輯
+    default_date = st.session_state.trip_start_date
+    if "selected_date" in st.session_state:
+        default_date = st.session_state.selected_date
+        
+    selected_date = st.date_input("📅 選擇要查看的行程日期", value=default_date)
     # 💡 [修改] 改用日曆選擇器 (Date Picker) 替換掉原本的上下頁按鈕
     default_date = st.session_state.trip_start_date
     if "selected_date" in st.session_state:
